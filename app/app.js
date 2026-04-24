@@ -126,17 +126,18 @@ async function uploadThumbnail(videoID) {
   const formData = new FormData();
   formData.append('thumbnail', thumbnailFile);
 
-  uploadBtnSelector = 'upload-thumbnail-btn';
+  const uploadBtnSelector = 'upload-thumbnail-btn';
   setUploadButtonState(true, uploadBtnSelector);
 
   try {
-    const res = await fetch(`/api/thumbnail_upload/${videoID}`, {
+    const res = await fetch(`/api/videos/${videoID}/thumbnail`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${localStorage.getItem('token')}`,
       },
       body: formData,
     });
+
     if (!res.ok) {
       const data = await res.json();
       throw new Error(`Failed to upload thumbnail. Error: ${data.error}`);
@@ -159,17 +160,18 @@ async function uploadVideoFile(videoID) {
   const formData = new FormData();
   formData.append('video', videoFile);
 
-  uploadBtnSelector = 'upload-video-btn';
+  const uploadBtnSelector = 'upload-video-btn';
   setUploadButtonState(true, uploadBtnSelector);
 
   try {
-    const res = await fetch(`/api/video_upload/${videoID}`, {
+    const res = await fetch(`/api/videos/${videoID}/video`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${localStorage.getItem('token')}`,
       },
       body: formData,
     });
+
     if (!res.ok) {
       const data = await res.json();
       throw new Error(`Failed to upload video file. Error: ${data.error}`);

@@ -102,26 +102,32 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+
+	// Static files
 	appHandler := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))
 	mux.Handle("/app/", appHandler)
 
 	assetsHandler := http.StripPrefix("/assets", http.FileServer(http.Dir(assetsRoot)))
 	mux.Handle("/assets/", cacheMiddleware(assetsHandler))
 
+	// Auth
 	mux.HandleFunc("POST /api/login", cfg.handlerLogin)
 	mux.HandleFunc("POST /api/refresh", cfg.handlerRefresh)
 	mux.HandleFunc("POST /api/revoke", cfg.handlerRevoke)
 
+	// Users
 	mux.HandleFunc("POST /api/users", cfg.handlerUsersCreate)
 
+	// Videos
 	mux.HandleFunc("POST /api/videos", cfg.handlerVideoMetaCreate)
 	mux.HandleFunc("POST /api/thumbnail_upload/{videoID}", cfg.handlerUploadThumbnail)
-	mux.HandleFunc("POST /api/video_upload/{videoID}", cfg.handlerUploadVideo)
+	mux.HandleFunc("POST /api/videos/{videoID}/video", cfg.handlerUploadVideo)
 	mux.HandleFunc("GET /api/videos", cfg.handlerVideosRetrieve)
 	mux.HandleFunc("GET /api/videos/{videoID}", cfg.handlerVideoGet)
 	mux.HandleFunc("GET /api/thumbnails/{videoID}", cfg.handlerThumbnailGet)
 	mux.HandleFunc("DELETE /api/videos/{videoID}", cfg.handlerVideoMetaDelete)
 
+	// Admin
 	mux.HandleFunc("POST /admin/reset", cfg.handlerReset)
 
 	srv := &http.Server{
