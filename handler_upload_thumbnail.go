@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,20 +10,7 @@ import (
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("UPLOAD HIT")
-
-	// Prevent server crash (very important for your error)
-	defer func() {
-		if err := recover(); err != nil {
-			fmt.Println("PANIC:", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
-	}()
-
 	const maxMemory = 10 << 20
-
-	// Debug path
-	fmt.Println("PATH:", r.URL.Path)
 
 	// Parse multipart form
 	err := r.ParseMultipartForm(maxMemory)
@@ -39,9 +27,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	// Get content type
-	mediaType := header.Header.Get("Content-Type")
-
 	// Read file data
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -49,45 +34,28 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Get video ID from URL
+	// Get video ID
 	videoIDStr := r.PathValue("videoID")
-	if videoIDStr == "" {
-		respondWithError(w, http.StatusBadRequest, "Missing video ID", nil)
-		return
-	}
-
-	fmt.Println("videoIDStr:", videoIDStr)
-
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid video ID", err)
 		return
 	}
 
-	// Get video from DB
-	video, err := cfg.db.GetVideo(videoID)
+	// Convert to base64
+	encoded := base64.StdEncoding.EncodeToString(data)
+
+	// Build data URL
+	mediaType := header.Header.Get("Content-Type")
+	thumbnailURL := fmt.Sprintf("data:%s;base64,%s", mediaType, encoded)
+
+	// Save to DB
+	err = cfg.db.UpdateVideoThumbnail(videoID, thumbnailURL)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Video not found", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to update thumbnail", err)
 		return
 	}
 
-	// Save thumbnail in memory
-	videoThumbnails[videoID] = thumbnail{
-		data:      data,
-		mediaType: mediaType,
-	}
-
-	// Create thumbnail URL
-	url := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID.String())
-	video.ThumbnailURL = &url
-
-	// Update DB
-	err = cfg.db.UpdateVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to update video", err)
-		return
-	}
-
-	// Success response
-	respondWithJSON(w, http.StatusOK, video)
+	// Success
+	w.WriteHeader(http.StatusOK)
 }

@@ -110,7 +110,8 @@ func (c Client) GetVideo(id uuid.UUID) (Video, error) {
 		&video.Description,
 		&video.ThumbnailURL,
 		&video.VideoURL,
-		&video.UserID)
+		&video.UserID,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Video{}, nil
@@ -137,11 +138,25 @@ func (c Client) UpdateVideo(video Video) error {
 		query,
 		video.Title,
 		video.Description,
-		&video.ThumbnailURL,
-		&video.VideoURL,
+		video.ThumbnailURL,
+		video.VideoURL,
 		video.UserID,
 		video.ID,
 	)
+	return err
+}
+
+// Only updates thumbnail URL to avoid
+func (c Client) UpdateVideoThumbnail(videoID uuid.UUID, thumbnailURL string) error {
+	query := `
+	UPDATE videos
+	SET
+		thumbnail_url = ?,
+		updated_at = CURRENT_TIMESTAMP
+	WHERE id = ?
+	`
+
+	_, err := c.db.Exec(query, thumbnailURL, videoID)
 	return err
 }
 
