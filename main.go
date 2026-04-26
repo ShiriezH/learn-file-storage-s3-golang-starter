@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
-
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
@@ -21,6 +22,7 @@ type apiConfig struct {
 	s3Region         string
 	s3CfDistribution string
 	port             string
+	s3Client         *s3.Client
 }
 
 func main() {
@@ -31,53 +33,31 @@ func main() {
 		log.Fatal("DB_PATH must be set")
 	}
 
-	db, err := database.NewClient(pathToDB)
+	dbClient, err := database.NewClient(pathToDB)
 	if err != nil {
 		log.Fatalf("Couldn't connect to database: %v", err)
 	}
 
 	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		log.Fatal("JWT_SECRET environment variable is not set")
-	}
-
 	platform := os.Getenv("PLATFORM")
-	if platform == "" {
-		log.Fatal("PLATFORM environment variable is not set")
-	}
-
 	filepathRoot := os.Getenv("FILEPATH_ROOT")
-	if filepathRoot == "" {
-		log.Fatal("FILEPATH_ROOT environment variable is not set")
-	}
-
 	assetsRoot := os.Getenv("ASSETS_ROOT")
-	if assetsRoot == "" {
-		log.Fatal("ASSETS_ROOT environment variable is not set")
-	}
-
 	s3Bucket := os.Getenv("S3_BUCKET")
-	if s3Bucket == "" {
-		log.Fatal("S3_BUCKET environment variable is not set")
-	}
-
 	s3Region := os.Getenv("S3_REGION")
-	if s3Region == "" {
-		log.Fatal("S3_REGION environment variable is not set")
-	}
-
 	s3CfDistribution := os.Getenv("S3_CF_DISTRO")
-	if s3CfDistribution == "" {
-		log.Fatal("S3_CF_DISTRO environment variable is not set")
+	port := os.Getenv("PORT")
+
+	awsCfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion(s3Region),
+	)
+	if err != nil {
+		log.Fatalf("unable to load AWS config: %v", err)
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		log.Fatal("PORT environment variable is not set")
-	}
+	s3Client := s3.NewFromConfig(awsCfg)
 
 	cfg := apiConfig{
-		db:               db,
+		db:               dbClient,
 		jwtSecret:        jwtSecret,
 		platform:         platform,
 		filepathRoot:     filepathRoot,
@@ -86,6 +66,7 @@ func main() {
 		s3Region:         s3Region,
 		s3CfDistribution: s3CfDistribution,
 		port:             port,
+		s3Client:         s3Client,
 	}
 
 	err = cfg.ensureAssetsDir()
@@ -95,12 +76,12 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// Static file servers
+	// Static
 	appHandler := http.StripPrefix("/app/", http.FileServer(http.Dir(filepathRoot)))
 	mux.Handle("/app/", appHandler)
 
 	assetsHandler := http.StripPrefix("/assets/", http.FileServer(http.Dir(assetsRoot)))
-	mux.Handle("/assets/", cacheMiddleware(assetsHandler))
+	mux.Handle("/assets/", noCacheMiddleware(assetsHandler))
 
 	// Auth
 	mux.HandleFunc("POST /api/login", cfg.handlerLogin)
@@ -112,7 +93,7 @@ func main() {
 
 	// Videos
 	mux.HandleFunc("POST /api/videos", cfg.handlerVideoMetaCreate)
-	mux.HandleFunc("POST /api/thumbnail_upload/{videoID}", cfg.handlerUploadThumbnail)
+	mux.HandleFunc("POST /api/videos/{videoID}/thumbnail", cfg.handlerUploadThumbnail)
 	mux.HandleFunc("POST /api/videos/{videoID}/video", cfg.handlerUploadVideo)
 	mux.HandleFunc("GET /api/videos", cfg.handlerVideosRetrieve)
 	mux.HandleFunc("GET /api/videos/{videoID}", cfg.handlerVideoGet)

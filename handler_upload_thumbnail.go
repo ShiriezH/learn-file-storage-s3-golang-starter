@@ -1,10 +1,14 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/google/uuid"
 )
@@ -12,29 +16,37 @@ import (
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
 	const maxMemory = 10 << 20
 
-	// Parse multipart form
 	err := r.ParseMultipartForm(maxMemory)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Could not parse multipart form", err)
+		respondWithError(w, http.StatusBadRequest, "Could not parse form", err)
 		return
 	}
 
-	// Get file
 	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to get file", err)
+		respondWithError(w, http.StatusBadRequest, "Could not get file", err)
 		return
 	}
 	defer file.Close()
 
-	// Read file data
-	data, err := io.ReadAll(file)
+	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Unable to read file", err)
+		respondWithError(w, http.StatusBadRequest, "Invalid content type", err)
 		return
 	}
 
-	// Get video ID
+	if mediaType != "image/jpeg" && mediaType != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "Only JPEG and PNG allowed", nil)
+		return
+	}
+
+	var fileExt string
+	if mediaType == "image/jpeg" {
+		fileExt = "jpg"
+	} else {
+		fileExt = "png"
+	}
+
 	videoIDStr := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDStr)
 	if err != nil {
@@ -42,20 +54,45 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Convert to base64
-	encoded := base64.StdEncoding.EncodeToString(data)
-
-	// Build data URL
-	mediaType := header.Header.Get("Content-Type")
-	thumbnailURL := fmt.Sprintf("data:%s;base64,%s", mediaType, encoded)
-
-	// Save to DB
-	err = cfg.db.UpdateVideoThumbnail(videoID, thumbnailURL)
+	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to update thumbnail", err)
+		respondWithError(w, http.StatusNotFound, "Video not found", err)
 		return
 	}
 
-	// Success
-	w.WriteHeader(http.StatusOK)
+	randomBytes := make([]byte, 32)
+	_, err = rand.Read(randomBytes)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not generate filename", err)
+		return
+	}
+
+	randomString := base64.RawURLEncoding.EncodeToString(randomBytes)
+	fileName := fmt.Sprintf("%s.%s", randomString, fileExt)
+
+	filePath := filepath.Join(cfg.assetsRoot, fileName)
+
+	dst, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not create file", err)
+		return
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not save file", err)
+		return
+	}
+
+	url := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, fileName)
+	video.ThumbnailURL = &url
+
+	err = cfg.db.UpdateVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not update video", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, video)
 }
