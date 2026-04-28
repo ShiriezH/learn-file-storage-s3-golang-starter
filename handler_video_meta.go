@@ -116,5 +116,14 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, videos)
+	// Filter out videos without a video URL (i.e. videos that haven't been fully uploaded yet)
+	filtered := []database.Video{}
+
+	for _, v := range videos {
+		if v.VideoURL != nil {
+			filtered = append(filtered, v)
+		}
+	}
+
+	respondWithJSON(w, http.StatusOK, filtered)
 }

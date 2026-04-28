@@ -16,8 +16,15 @@ import (
 )
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
-	// Limit upload size to 1GB
+	// Limit upload size
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<30)
+
+	// Parse multipart form
+	err := r.ParseMultipartForm(1 << 30)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "could not parse form", err)
+		return
+	}
 
 	// Parse video ID
 	videoIDStr := r.PathValue("videoID")
@@ -44,7 +51,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	// Validate MIME type
 	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
-	if err != nil || mediaType != "video/mp4" {
+	if err != nil || (mediaType != "video/mp4" && mediaType != "application/octet-stream") {
 		respondWithError(w, http.StatusBadRequest, "only mp4 allowed", nil)
 		return
 	}
@@ -72,6 +79,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Detect aspect ratio
+	aspect, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "could not detect aspect ratio", err)
+		return
+	}
+
 	// Generate random key
 	randomBytes := make([]byte, 32)
 	_, err = rand.Read(randomBytes)
@@ -80,7 +94,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	fileKey := hex.EncodeToString(randomBytes) + ".mp4"
+	// Prefix path (landscape / portrait / other)
+	fileKey := fmt.Sprintf("%s/%s.mp4", aspect, hex.EncodeToString(randomBytes))
 
 	// Upload to S3
 	_, err = cfg.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
@@ -94,7 +109,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Build S3 URL
+	// Build URL
 	videoURL := fmt.Sprintf(
 		"https://%s.s3.%s.amazonaws.com/%s",
 		cfg.s3Bucket,
@@ -102,14 +117,18 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		fileKey,
 	)
 
-	video.VideoURL = &videoURL
+	fmt.Println("UPLOADING VIDEO:", video.ID, videoURL)
 
-	// Update DB
-	err = cfg.db.UpdateVideo(video)
+	// Update video record with URL
+	err = cfg.db.UpdateVideoURL(video.ID, videoURL)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "db update failed", err)
 		return
 	}
+
+	fmt.Println("UPDATED DB SUCCESSFULLY")
+
+	video.VideoURL = &videoURL
 
 	respondWithJSON(w, http.StatusOK, video)
 }

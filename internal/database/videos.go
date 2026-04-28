@@ -14,7 +14,9 @@ type Video struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	ThumbnailURL *string   `json:"thumbnail_url"`
 	VideoURL     *string   `json:"video_url"`
-	CreateVideoParams
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	UserID       uuid.UUID `json:"user_id"`
 }
 
 type CreateVideoParams struct {
@@ -25,15 +27,7 @@ type CreateVideoParams struct {
 
 func (c Client) GetVideos(userID uuid.UUID) ([]Video, error) {
 	query := `
-	SELECT
-		id,
-		created_at,
-		updated_at,
-		title,
-		description,
-		thumbnail_url,
-		video_url,
-		user_id
+	SELECT id, created_at, updated_at, title, description, thumbnail_url, video_url, user_id
 	FROM videos
 	WHERE user_id = ?
 	ORDER BY created_at DESC
@@ -46,21 +40,25 @@ func (c Client) GetVideos(userID uuid.UUID) ([]Video, error) {
 	defer rows.Close()
 
 	videos := []Video{}
+
 	for rows.Next() {
-		var video Video
-		if err := rows.Scan(
-			&video.ID,
-			&video.CreatedAt,
-			&video.UpdatedAt,
-			&video.Title,
-			&video.Description,
-			&video.ThumbnailURL,
-			&video.VideoURL,
-			&video.UserID,
-		); err != nil {
+		var v Video
+
+		err := rows.Scan(
+			&v.ID,
+			&v.CreatedAt,
+			&v.UpdatedAt,
+			&v.Title,
+			&v.Description,
+			&v.ThumbnailURL,
+			&v.VideoURL,
+			&v.UserID,
+		)
+		if err != nil {
 			return nil, err
 		}
-		videos = append(videos, video)
+
+		videos = append(videos, v)
 	}
 
 	return videos, nil
@@ -68,16 +66,12 @@ func (c Client) GetVideos(userID uuid.UUID) ([]Video, error) {
 
 func (c Client) CreateVideo(params CreateVideoParams) (Video, error) {
 	id := uuid.New()
+
 	query := `
-	INSERT INTO videos (
-		id,
-		created_at,
-		updated_at,
-		title,
-		description,
-		user_id
-	) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?)
+	INSERT INTO videos (id, created_at, updated_at, title, description, user_id)
+	VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?)
 	`
+
 	_, err := c.db.Exec(query, id, params.Title, params.Description, params.UserID)
 	if err != nil {
 		return Video{}, err
@@ -88,29 +82,22 @@ func (c Client) CreateVideo(params CreateVideoParams) (Video, error) {
 
 func (c Client) GetVideo(id uuid.UUID) (Video, error) {
 	query := `
-	SELECT
-		id,
-		created_at,
-		updated_at,
-		title,
-		description,
-		thumbnail_url,
-		video_url,
-		user_id
+	SELECT id, created_at, updated_at, title, description, thumbnail_url, video_url, user_id
 	FROM videos
 	WHERE id = ?
 	`
 
-	var video Video
+	var v Video
+
 	err := c.db.QueryRow(query, id).Scan(
-		&video.ID,
-		&video.CreatedAt,
-		&video.UpdatedAt,
-		&video.Title,
-		&video.Description,
-		&video.ThumbnailURL,
-		&video.VideoURL,
-		&video.UserID,
+		&v.ID,
+		&v.CreatedAt,
+		&v.UpdatedAt,
+		&v.Title,
+		&v.Description,
+		&v.ThumbnailURL,
+		&v.VideoURL,
+		&v.UserID,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -119,19 +106,14 @@ func (c Client) GetVideo(id uuid.UUID) (Video, error) {
 		return Video{}, err
 	}
 
-	return video, nil
+	return v, nil
 }
 
 func (c Client) UpdateVideo(video Video) error {
 	query := `
 	UPDATE videos
-	SET
-		title = ?,
-		description = ?,
-		thumbnail_url = ?,
-		video_url = ?,
-		user_id = ?
-	WHERE id = ?
+	SET title=?, description=?, thumbnail_url=?, video_url=?, user_id=?, updated_at=CURRENT_TIMESTAMP
+	WHERE id=?
 	`
 
 	_, err := c.db.Exec(
@@ -143,28 +125,22 @@ func (c Client) UpdateVideo(video Video) error {
 		video.UserID,
 		video.ID,
 	)
+
 	return err
 }
 
-// Only updates thumbnail URL to avoid
-func (c Client) UpdateVideoThumbnail(videoID uuid.UUID, thumbnailURL string) error {
+func (c Client) UpdateVideoURL(videoID uuid.UUID, videoURL string) error {
 	query := `
 	UPDATE videos
-	SET
-		thumbnail_url = ?,
-		updated_at = CURRENT_TIMESTAMP
-	WHERE id = ?
+	SET video_url=?, updated_at=CURRENT_TIMESTAMP
+	WHERE id=?
 	`
 
-	_, err := c.db.Exec(query, thumbnailURL, videoID)
+	_, err := c.db.Exec(query, videoURL, videoID)
 	return err
 }
 
 func (c Client) DeleteVideo(id uuid.UUID) error {
-	query := `
-	DELETE FROM videos
-	WHERE id = ?
-	`
-	_, err := c.db.Exec(query, id)
+	_, err := c.db.Exec(`DELETE FROM videos WHERE id=?`, id)
 	return err
 }
