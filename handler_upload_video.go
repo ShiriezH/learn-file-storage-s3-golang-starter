@@ -86,6 +86,21 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Process video for fast start
+	processedPath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "video processing failed", err)
+		return
+	}
+	defer os.Remove(processedPath)
+
+	processedFile, err := os.Open(processedPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "could not open processed file", err)
+		return
+	}
+	defer processedFile.Close()
+
 	// Generate random key
 	randomBytes := make([]byte, 32)
 	_, err = rand.Read(randomBytes)
@@ -97,11 +112,11 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	// Prefix path (landscape / portrait / other)
 	fileKey := fmt.Sprintf("%s/%s.mp4", aspect, hex.EncodeToString(randomBytes))
 
-	// Upload to S3
+	// Upload processed file to S3
 	_, err = cfg.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileKey,
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: aws.String("video/mp4"),
 	})
 	if err != nil {
@@ -119,7 +134,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	fmt.Println("UPLOADING VIDEO:", video.ID, videoURL)
 
-	// Update video record with URL
+	// Update DB
 	err = cfg.db.UpdateVideoURL(video.ID, videoURL)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "db update failed", err)
