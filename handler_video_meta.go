@@ -19,24 +19,25 @@ func (cfg *apiConfig) handlerVideoMetaCreate(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
 		return
 	}
+
 	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
 		return
 	}
 
-	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err = decoder.Decode(&params)
+	err = json.NewDecoder(r.Body).Decode(&params)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters", err)
+		respondWithError(w, http.StatusInternalServerError, "decode failed", err)
 		return
 	}
+
 	params.UserID = userID
 
 	video, err := cfg.db.CreateVideo(params.CreateVideoParams)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't create video", err)
+		respondWithError(w, http.StatusInternalServerError, "create failed", err)
 		return
 	}
 
@@ -44,37 +45,25 @@ func (cfg *apiConfig) handlerVideoMetaCreate(w http.ResponseWriter, r *http.Requ
 }
 
 func (cfg *apiConfig) handlerVideoMetaDelete(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
-	videoID, err := uuid.Parse(videoIDString)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
-		return
-	}
+	videoID, _ := uuid.Parse(r.PathValue("videoID"))
 
-	token, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
-		return
-	}
-	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
-		return
-	}
+	token, _ := auth.GetBearerToken(r.Header)
+	userID, _ := auth.ValidateJWT(token, cfg.jwtSecret)
 
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Couldn't get video", err)
+		respondWithError(w, http.StatusNotFound, "not found", err)
 		return
 	}
+
 	if video.UserID != userID {
-		respondWithError(w, http.StatusForbidden, "You can't delete this video", err)
+		respondWithError(w, http.StatusForbidden, "not allowed", nil)
 		return
 	}
 
 	err = cfg.db.DeleteVideo(videoID)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't delete video", err)
+		respondWithError(w, http.StatusInternalServerError, "delete failed", err)
 		return
 	}
 
@@ -82,16 +71,17 @@ func (cfg *apiConfig) handlerVideoMetaDelete(w http.ResponseWriter, r *http.Requ
 }
 
 func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
-	videoID, err := uuid.Parse(videoIDString)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid video ID", err)
-		return
-	}
+	videoID, _ := uuid.Parse(r.PathValue("videoID"))
 
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Couldn't get video", err)
+		respondWithError(w, http.StatusNotFound, "not found", err)
+		return
+	}
+
+	video, err = cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "sign failed", err)
 		return
 	}
 
@@ -99,29 +89,25 @@ func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Request) {
-	token, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
-		return
-	}
-	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
-		return
-	}
+	token, _ := auth.GetBearerToken(r.Header)
+	userID, _ := auth.ValidateJWT(token, cfg.jwtSecret)
 
 	videos, err := cfg.db.GetVideos(userID)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't retrieve videos", err)
+		respondWithError(w, http.StatusInternalServerError, "fetch failed", err)
 		return
 	}
 
-	// Filter out videos without a video URL (i.e. videos that haven't been fully uploaded yet)
 	filtered := []database.Video{}
 
 	for _, v := range videos {
 		if v.VideoURL != nil {
-			filtered = append(filtered, v)
+			signed, err := cfg.dbVideoToSignedVideo(v)
+			if err != nil {
+				respondWithError(w, http.StatusInternalServerError, "sign failed", err)
+				return
+			}
+			filtered = append(filtered, signed)
 		}
 	}
 
