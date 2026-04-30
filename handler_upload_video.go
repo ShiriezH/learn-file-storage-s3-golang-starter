@@ -9,13 +9,10 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 )
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +110,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, fileKey)
+	// In a production app, you'd want to invalidate the CloudFront cache for this file here.
+	videoURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, fileKey)
 
 	err = cfg.db.UpdateVideoURL(video.ID, videoURL)
 	if err != nil {
@@ -123,45 +121,5 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	video.VideoURL = &videoURL
 
-	video, err = cfg.dbVideoToSignedVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "sign failed", err)
-		return
-	}
-
 	respondWithJSON(w, http.StatusOK, video)
-}
-
-func generatePresignedURL(s3Client *s3.Client, bucket, key string, expire time.Duration) (string, error) {
-	presigner := s3.NewPresignClient(s3Client)
-
-	req, err := presigner.PresignGetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
-	}, s3.WithPresignExpires(expire))
-
-	if err != nil {
-		return "", err
-	}
-
-	return req.URL, nil
-}
-
-func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
-	if video.VideoURL == nil {
-		return video, nil
-	}
-
-	parts := strings.Split(*video.VideoURL, ",")
-	if len(parts) != 2 {
-		return video, fmt.Errorf("invalid format")
-	}
-
-	url, err := generatePresignedURL(cfg.s3Client, parts[0], parts[1], 5*time.Minute)
-	if err != nil {
-		return video, err
-	}
-
-	video.VideoURL = &url
-	return video, nil
 }
